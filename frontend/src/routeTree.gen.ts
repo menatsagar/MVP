@@ -9,12 +9,26 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ReviewsRouteImport } from './routes/reviews'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as BandsRouteImport } from './routes/bands'
+import { Route as AuditRouteImport } from './routes/audit'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ReviewsIdRouteImport } from './routes/reviews.$id'
 import { Route as EmployeesIdRouteImport } from './routes/employees.$id'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReviewsRoute = ReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EmployeesRoute = EmployeesRouteImport.update({
   id: '/employees',
   path: '/employees',
@@ -30,10 +44,20 @@ const BandsRoute = BandsRouteImport.update({
   path: '/bands',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuditRoute = AuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ReviewsIdRoute = ReviewsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ReviewsRoute,
 } as any)
 const EmployeesIdRoute = EmployeesIdRouteImport.update({
   id: '/$id',
@@ -43,49 +67,100 @@ const EmployeesIdRoute = EmployeesIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/audit': typeof AuditRoute
   '/bands': typeof BandsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRouteWithChildren
+  '/reviews': typeof ReviewsRouteWithChildren
+  '/settings': typeof SettingsRoute
   '/employees/$id': typeof EmployeesIdRoute
+  '/reviews/$id': typeof ReviewsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/audit': typeof AuditRoute
   '/bands': typeof BandsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRouteWithChildren
+  '/reviews': typeof ReviewsRouteWithChildren
+  '/settings': typeof SettingsRoute
   '/employees/$id': typeof EmployeesIdRoute
+  '/reviews/$id': typeof ReviewsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/audit': typeof AuditRoute
   '/bands': typeof BandsRoute
   '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRouteWithChildren
+  '/reviews': typeof ReviewsRouteWithChildren
+  '/settings': typeof SettingsRoute
   '/employees/$id': typeof EmployeesIdRoute
+  '/reviews/$id': typeof ReviewsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/bands' | '/dashboard' | '/employees' | '/employees/$id'
-  fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/bands' | '/dashboard' | '/employees' | '/employees/$id'
-  id:
-    | '__root__'
+  fullPaths:
     | '/'
+    | '/audit'
     | '/bands'
     | '/dashboard'
     | '/employees'
+    | '/reviews'
+    | '/settings'
     | '/employees/$id'
+    | '/reviews/$id'
+  fileRoutesByTo: FileRoutesByTo
+  to:
+    | '/'
+    | '/audit'
+    | '/bands'
+    | '/dashboard'
+    | '/employees'
+    | '/reviews'
+    | '/settings'
+    | '/employees/$id'
+    | '/reviews/$id'
+  id:
+    | '__root__'
+    | '/'
+    | '/audit'
+    | '/bands'
+    | '/dashboard'
+    | '/employees'
+    | '/reviews'
+    | '/settings'
+    | '/employees/$id'
+    | '/reviews/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuditRoute: typeof AuditRoute
   BandsRoute: typeof BandsRoute
   DashboardRoute: typeof DashboardRoute
   EmployeesRoute: typeof EmployeesRouteWithChildren
+  ReviewsRoute: typeof ReviewsRouteWithChildren
+  SettingsRoute: typeof SettingsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reviews': {
+      id: '/reviews'
+      path: '/reviews'
+      fullPath: '/reviews'
+      preLoaderRoute: typeof ReviewsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/employees': {
       id: '/employees'
       path: '/employees'
@@ -107,12 +182,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BandsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/audit': {
+      id: '/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/reviews/$id': {
+      id: '/reviews/$id'
+      path: '/$id'
+      fullPath: '/reviews/$id'
+      preLoaderRoute: typeof ReviewsIdRouteImport
+      parentRoute: typeof ReviewsRoute
     }
     '/employees/$id': {
       id: '/employees/$id'
@@ -136,11 +225,25 @@ const EmployeesRouteWithChildren = EmployeesRoute._addFileChildren(
   EmployeesRouteChildren,
 )
 
+interface ReviewsRouteChildren {
+  ReviewsIdRoute: typeof ReviewsIdRoute
+}
+
+const ReviewsRouteChildren: ReviewsRouteChildren = {
+  ReviewsIdRoute: ReviewsIdRoute,
+}
+
+const ReviewsRouteWithChildren =
+  ReviewsRoute._addFileChildren(ReviewsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuditRoute: AuditRoute,
   BandsRoute: BandsRoute,
   DashboardRoute: DashboardRoute,
   EmployeesRoute: EmployeesRouteWithChildren,
+  ReviewsRoute: ReviewsRouteWithChildren,
+  SettingsRoute: SettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
