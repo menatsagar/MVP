@@ -10,12 +10,24 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as EmployeesRouteImport } from './routes/employees'
+import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as BandsRouteImport } from './routes/bands'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as EmployeesIdRouteImport } from './routes/employees.$id'
 
 const EmployeesRoute = EmployeesRouteImport.update({
   id: '/employees',
   path: '/employees',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BandsRoute = BandsRouteImport.update({
+  id: '/bands',
+  path: '/bands',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -31,30 +43,44 @@ const EmployeesIdRoute = EmployeesIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/bands': typeof BandsRoute
+  '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRouteWithChildren
   '/employees/$id': typeof EmployeesIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/bands': typeof BandsRoute
+  '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRouteWithChildren
   '/employees/$id': typeof EmployeesIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/bands': typeof BandsRoute
+  '/dashboard': typeof DashboardRoute
   '/employees': typeof EmployeesRouteWithChildren
   '/employees/$id': typeof EmployeesIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/employees' | '/employees/$id'
+  fullPaths: '/' | '/bands' | '/dashboard' | '/employees' | '/employees/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/employees' | '/employees/$id'
-  id: '__root__' | '/' | '/employees' | '/employees/$id'
+  to: '/' | '/bands' | '/dashboard' | '/employees' | '/employees/$id'
+  id:
+    | '__root__'
+    | '/'
+    | '/bands'
+    | '/dashboard'
+    | '/employees'
+    | '/employees/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BandsRoute: typeof BandsRoute
+  DashboardRoute: typeof DashboardRoute
   EmployeesRoute: typeof EmployeesRouteWithChildren
 }
 
@@ -65,6 +91,20 @@ declare module '@tanstack/react-router' {
       path: '/employees'
       fullPath: '/employees'
       preLoaderRoute: typeof EmployeesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/bands': {
+      id: '/bands'
+      path: '/bands'
+      fullPath: '/bands'
+      preLoaderRoute: typeof BandsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -98,6 +138,8 @@ const EmployeesRouteWithChildren = EmployeesRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BandsRoute: BandsRoute,
+  DashboardRoute: DashboardRoute,
   EmployeesRoute: EmployeesRouteWithChildren,
 }
 export const routeTree = rootRouteImport
