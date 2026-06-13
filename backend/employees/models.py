@@ -67,6 +67,7 @@ class SalaryRecord(models.Model):
     """
     Append-only salary history.
     No record is ever updated or deleted — edits create new rows.
+    Model-level guards enforce immutability after initial creation.
     """
 
     SOURCE_CHOICES = [
@@ -110,4 +111,18 @@ class SalaryRecord(models.Model):
         return (
             f"{self.employee.employee_code} | "
             f"{self.base_salary} | {self.effective_date}"
+        )
+
+    def save(self, *args, **kwargs):
+        """Block updates on existing records — append-only."""
+        if self.pk and not self._state.adding:
+            raise ValueError(
+                "SalaryRecord is immutable. Create a new record instead of updating."
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        """Block deletion — salary history must be preserved."""
+        raise ValueError(
+            "SalaryRecord cannot be deleted. Salary history is immutable."
         )

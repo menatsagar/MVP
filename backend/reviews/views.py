@@ -1,17 +1,17 @@
-from datetime import date
-
-from django.db import transaction
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from employees.models import SalaryRecord
-
-from .models import DepartmentBudget, ReviewCycle, SalaryProposal
+from core.models import BackgroundTask
+from audit.utils import log_audit
+from .models import ReviewCycle, SalaryProposal, DepartmentBudget
 from .serializers import (
     DepartmentBudgetSerializer,
-    ReviewCycleDetailSerializer,
     ReviewCycleSerializer,
+    ReviewCycleCreateSerializer,
+    ReviewCycleListSerializer,
+    ReviewCycleDetailSerializer,
     SalaryProposalSerializer,
 )
 
@@ -19,9 +19,7 @@ from .serializers import (
 class ReviewCycleViewSet(viewsets.ModelViewSet):
     """
     CRUD for review cycles.
-    - List uses the lightweight serializer.
-    - Retrieve uses the detail serializer with nested budgets/proposals.
-    - Custom `commit` action applies all proposals.
+    Includes custom transitions and nested updates for proposals/budgets.
     """
 
     queryset = ReviewCycle.objects.all()
@@ -29,81 +27,126 @@ class ReviewCycleViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == "retrieve":
             return ReviewCycleDetailSerializer
+        elif self.action == "list":
+            return ReviewCycleListSerializer
+        elif self.action == "create":
+            return ReviewCycleCreateSerializer
         return ReviewCycleSerializer
 
     @action(detail=True, methods=["post"])
-    def commit(self, request, pk=None):
+    def transition(self, request, pk=None):
         """
-        Commit all proposals in this review cycle:
-        1. Create a SalaryRecord for each uncommitted proposal.
-        2. Update each employee's current_salary_record pointer.
-        3. Mark proposals as committed.
-        4. Set cycle status to 'completed'.
+        Transition review cycle status.
+        Accepts: {"status": "in_progress"|"completed"}
+        On "completed", triggers Celery background commit task.
         """
         cycle = self.get_object()
+        new_status = request.data.get("status")
+
+        if new_status not in ["in_progress", "completed"]:
+            return Response(
+                {"error": "Invalid status. Must be 'in_progress' or 'completed'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if cycle.status == "completed":
             return Response(
-                {"error": "This review cycle is already completed."},
+                {"error": "Cannot transition a completed review cycle."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        uncommitted = cycle.proposals.filter(is_committed=False).select_related(
-            "employee"
-        )
-        if not uncommitted.exists():
-            return Response(
-                {"error": "No uncommitted proposals found."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        with transaction.atomic():
-            for proposal in uncommitted:
-                # Create a new salary record
-                record = SalaryRecord.objects.create(
-                    employee=proposal.employee,
-                    base_salary=proposal.proposed_salary,
-                    variable_bonus_pct=0,
-                    effective_date=date.today(),
-                    hr_note=f"Applied from review cycle: {cycle.name}",
-                    source="salary_review",
-                    review_cycle=cycle,
-                    created_by="HR Manager",
+        if new_status == "in_progress":
+            if cycle.status != "draft":
+                return Response(
+                    {"error": "Can only transition to 'in_progress' from 'draft'."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-                # Update the employee's current salary pointer
-                proposal.employee.current_salary_record = record
-                proposal.employee.save(
-                    update_fields=["current_salary_record", "updated_at"]
-                )
-                # Mark proposal as committed
-                proposal.is_committed = True
-                proposal.save(update_fields=["is_committed"])
-
-            # Mark cycle as completed
-            cycle.status = "completed"
+            old_status = cycle.status
+            cycle.status = "in_progress"
             cycle.save(update_fields=["status", "updated_at"])
+            
+            log_audit(
+                action="update",
+                entity_type="review_cycle",
+                entity_id=cycle.pk,
+                entity_label=str(cycle),
+                field_changed="status",
+                old_value=old_status,
+                new_value=cycle.status,
+            )
+            return Response({"status": "updated", "cycle_status": cycle.status})
 
-        return Response(
-            {
-                "status": "committed",
-                "proposals_applied": uncommitted.count(),
-            }
-        )
+        elif new_status == "completed":
+            if cycle.status != "in_progress":
+                return Response(
+                    {"error": "Can only transition to 'completed' from 'in_progress'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
+            # Create background task for async processing
+            task = BackgroundTask.objects.create(
+                task_type="review_commit",
+                status="pending",
+            )
 
-class DepartmentBudgetViewSet(viewsets.ModelViewSet):
-    """CRUD for department budgets within a review cycle."""
+            from .tasks import commit_review_cycle
+            commit_review_cycle.delay(cycle.id, str(task.id))
 
-    queryset = DepartmentBudget.objects.select_related(
-        "review_cycle", "department"
-    ).all()
-    serializer_class = DepartmentBudgetSerializer
+            return Response(
+                {
+                    "status": "processing",
+                    "task_id": str(task.id),
+                    "message": "Review cycle completion task has been queued.",
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
+    @action(detail=True, methods=["get"], url_path="proposals")
+    def list_proposals(self, request, pk=None):
+        """List proposals for the review cycle."""
+        cycle = self.get_object()
+        proposals = cycle.proposals.select_related("employee", "employee__department")
+        serializer = SalaryProposalSerializer(proposals, many=True)
+        return Response(serializer.data)
 
-class SalaryProposalViewSet(viewsets.ModelViewSet):
-    """CRUD for salary proposals within a review cycle."""
+    @action(detail=True, methods=["patch"], url_path="proposals/(?P<proposal_id>[0-9]+)")
+    def update_proposal(self, request, pk=None, proposal_id=None):
+        """Update proposed increase percentage for a proposal."""
+        cycle = self.get_object()
+        proposal = get_object_or_404(cycle.proposals, pk=proposal_id)
 
-    queryset = SalaryProposal.objects.select_related(
-        "review_cycle", "employee"
-    ).all()
-    serializer_class = SalaryProposalSerializer
+        if cycle.status == "completed":
+            return Response(
+                {"error": "Cannot update proposal in a completed review cycle."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = SalaryProposalSerializer(proposal, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="budgets")
+    def list_budgets(self, request, pk=None):
+        """List department budgets for the review cycle."""
+        cycle = self.get_object()
+        budgets = cycle.department_budgets.select_related("department")
+        serializer = DepartmentBudgetSerializer(budgets, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["patch"], url_path="budgets/(?P<budget_id>[0-9]+)")
+    def update_budget(self, request, pk=None, budget_id=None):
+        """Update budget percentage for a department budget."""
+        cycle = self.get_object()
+        budget = get_object_or_404(cycle.department_budgets, pk=budget_id)
+
+        if cycle.status == "completed":
+            return Response(
+                {"error": "Cannot update budget in a completed review cycle."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = DepartmentBudgetSerializer(budget, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

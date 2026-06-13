@@ -1,18 +1,15 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import EmployeeViewSet, SalaryRecordViewSet
+from .views import EmployeeViewSet
+from .views_dashboard import DashboardDistributionView, DashboardSummaryView
 
 router = DefaultRouter()
 router.register("employees", EmployeeViewSet, basename="employee")
-router.register("salary-records", SalaryRecordViewSet, basename="salaryrecord")
 
 urlpatterns = [
     path("", include(router.urls)),
-    # Nested route: /api/employees/<pk>/salary-history/
-    path(
-        "employees/<int:employee_pk>/salary-history/",
-        SalaryRecordViewSet.as_view({"get": "list"}),
-        name="employee-salary-history",
-    ),
+    # Dashboard endpoints
+    path("dashboard/summary/", DashboardSummaryView.as_view(), name="dashboard-summary"),
+    path("dashboard/distribution/", DashboardDistributionView.as_view(), name="dashboard-distribution"),
 ]

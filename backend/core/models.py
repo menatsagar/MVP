@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -66,3 +68,37 @@ class JobTitle(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.department.name})"
+
+
+class BackgroundTask(models.Model):
+    """
+    Lightweight task tracker for async Celery jobs.
+    Used for CSV imports, exports, review cycle commits, etc.
+    """
+
+    TASK_TYPE_CHOICES = [
+        ("csv_import", "CSV Import"),
+        ("employee_export", "Employee Export"),
+        ("review_commit", "Review Cycle Commit"),
+        ("audit_export", "Audit Log Export"),
+    ]
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("processing", "Processing"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_type = models.CharField(max_length=30, choices=TASK_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    result_data = models.JSONField(null=True, blank=True, help_text="Row counts, errors, etc.")
+    file = models.FileField(upload_to="exports/", null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.task_type} — {self.status} ({self.id})"

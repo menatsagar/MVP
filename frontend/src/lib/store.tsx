@@ -1,11 +1,8 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 import type {
   Employee, SalaryBand, ExchangeRate, ReviewCycle, AuditEntry,
-  SalaryHistoryEntry, AuditAction, AuditEntity,
+  SalaryHistoryEntry,
 } from "./types";
-import {
-  seedEmployees, seedBands, seedRates, seedCycles, seedAudit, seedHistory,
-} from "./seed";
 
 interface StoreCtx {
   employees: Employee[];
@@ -14,32 +11,90 @@ interface StoreCtx {
   rates: ExchangeRate[];
   cycles: ReviewCycle[];
   audit: AuditEntry[];
-  addEmployee: (e: Omit<Employee, "id"> & { id?: string }) => void;
-  updateEmployee: (id: string, patch: Partial<Employee>, note: string) => void;
-  setEmployeeStatus: (id: string, status: Employee["status"]) => void;
-  addBand: (b: Omit<SalaryBand, "id">) => void;
-  updateBand: (id: string, patch: Partial<SalaryBand>) => void;
-  deleteBand: (id: string) => void;
-  upsertRate: (r: ExchangeRate) => void;
-  addRate: (r: ExchangeRate) => void;
-  addCycle: (c: Omit<ReviewCycle, "id" | "status" | "proposals">) => void;
-  updateCycle: (id: string, patch: Partial<ReviewCycle>) => void;
-  commitCycle: (id: string) => void;
+  addEmployee: (e: Omit<Employee, "id"> & { id?: string }) => Promise<void>;
+  updateEmployee: (id: string, patch: Partial<Employee>, note: string) => Promise<void>;
+  setEmployeeStatus: (id: string, status: Employee["status"]) => Promise<void>;
+  addBand: (b: Omit<SalaryBand, "id">) => Promise<void>;
+  updateBand: (id: string, patch: Partial<SalaryBand>) => Promise<void>;
+  deleteBand: (id: string) => Promise<void>;
+  upsertRate: (r: ExchangeRate) => Promise<void>;
+  addRate: (r: ExchangeRate) => Promise<void>;
+  addCycle: (c: Omit<ReviewCycle, "id" | "status" | "proposals">) => Promise<void>;
+  updateCycle: (id: string, patch: Partial<ReviewCycle>) => Promise<void>;
+  commitCycle: (id: string) => Promise<void>;
   logAudit: (e: Omit<AuditEntry, "id" | "timestamp" | "user">) => void;
   getBandFor: (jobTitle: string, country: string) => SalaryBand | undefined;
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
 
+const isBrowser = typeof window !== "undefined";
+
+let authToken: string | null = null;
+
+async function getAuthToken() {
+  if (authToken) return authToken;
+  const storedToken = isBrowser ? localStorage.getItem("auth_token") : null;
+  if (storedToken) {
+    authToken = storedToken;
+    return authToken;
+  }
+  try {
+    const res = await fetch("http://localhost:8000/api/auth/token/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "hr_manager", password: "changeme123!" }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      authToken = data.token;
+      if (isBrowser) {
+        localStorage.setItem("auth_token", data.token);
+      }
+      return authToken;
+    }
+  } catch (err) {
+    console.error("Auth failed:", err);
+  }
+  return null;
+}
+
+async function apiRequest(path: string, options: RequestInit = {}) {
+  const token = await getAuthToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { "Authorization": `Token ${token}` } : {}),
+    ...options.headers,
+  };
+  const res = await fetch(`http://localhost:8000/api${path}`, {
+    ...options,
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [employees, setEmployees] = useState<Employee[]>(seedEmployees);
-  const [history, setHistory] = useState<SalaryHistoryEntry[]>(seedHistory);
-  const [bands, setBands] = useState<SalaryBand[]>(seedBands);
-  const [rates, setRates] = useState<ExchangeRate[]>(seedRates);
-  const [cycles, setCycles] = useState<ReviewCycle[]>(seedCycles);
-  const [audit, setAudit] = useState<AuditEntry[]>(seedAudit);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [history, setHistory] = useState<SalaryHistoryEntry[]>([]);
+  const [bands, setBands] = useState<SalaryBand[]>([]);
+  const [rates, setRates] = useState<ExchangeRate[]>([]);
+  const [cycles, setCycles] = useState<ReviewCycle[]>([]);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+
+  // Cache reference data mapping lists
+  const [refDepts, setRefDepts] = useState<{ id: number; name: string }[]>([]);
+  const [refCountries, setRefCountries] = useState<{ id: number; name: string }[]>([]);
+  const [refJobTitles, setRefJobTitles] = useState<{ id: number; title: string; department: number }[]>([]);
+  const [refCurrencies, setRefCurrencies] = useState<{ id: number; code: string }[]>([]);
 
   const logAudit = useCallback((e: Omit<AuditEntry, "id" | "timestamp" | "user">) => {
+    // Audit logs are read-only via API and created on the backend.
+    // Client-side local append-only logging is kept as a fallback.
     setAudit((prev) => [
       {
         ...e,
@@ -51,106 +106,367 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ]);
   }, []);
 
-  const addEmployee: StoreCtx["addEmployee"] = useCallback((e) => {
-    const id = e.id || `EMP-${1000 + Math.floor(Math.random() * 9000)}`;
-    const newEmp: Employee = { ...e, id } as Employee;
-    setEmployees((prev) => [...prev, newEmp]);
-    setHistory((prev) => [
-      { id: `H-${id}-${Date.now()}`, employeeId: id, effectiveDate: newEmp.effectiveDate, baseSalary: newEmp.baseSalary, currency: newEmp.currency, changeAmount: 0, changePct: 0, hrNote: e.hrNote || "Initial record" },
-      ...prev,
-    ]);
-    logAudit({ action: "Create", entityType: "Employee", entityName: `${newEmp.name} (${id})` });
-  }, [logAudit]);
+  const refreshData = useCallback(async () => {
+    try {
+      // 1. Fetch metadata references
+      const deptsData = await apiRequest("/departments/");
+      setRefDepts(deptsData);
+      const countriesData = await apiRequest("/countries/");
+      setRefCountries(countriesData);
+      const jobTitlesData = await apiRequest("/job-titles/");
+      setRefJobTitles(jobTitlesData);
 
-  const updateEmployee: StoreCtx["updateEmployee"] = useCallback((id, patch, note) => {
-    setEmployees((prev) => prev.map((e) => {
-      if (e.id !== id) return e;
-      const updated = { ...e, ...patch };
-      if (patch.baseSalary !== undefined && patch.baseSalary !== e.baseSalary) {
-        const change = patch.baseSalary - e.baseSalary;
-        const pct = (change / e.baseSalary) * 100;
-        setHistory((h) => [
-          { id: `H-${id}-${Date.now()}`, employeeId: id, effectiveDate: patch.effectiveDate || new Date().toISOString().slice(0, 10), baseSalary: patch.baseSalary!, currency: updated.currency, changeAmount: change, changePct: pct, hrNote: note },
-          ...h,
-        ]);
-        logAudit({ action: "Edit", entityType: "Employee", entityName: `${updated.name} (${id})`, field: "baseSalary", oldValue: String(e.baseSalary), newValue: String(patch.baseSalary) });
-      } else {
-        logAudit({ action: "Edit", entityType: "Employee", entityName: `${updated.name} (${id})`, field: Object.keys(patch).join(","), oldValue: "—", newValue: "—" });
+      // 2. Fetch exchange rates (currencies)
+      const currenciesData = await apiRequest("/settings/currencies/");
+      setRefCurrencies(currenciesData);
+      const mappedRates = currenciesData.map((c: any) => ({
+        code: c.code,
+        name: c.name,
+        rateToUsd: parseFloat(c.rate_to_usd),
+        lastUpdated: c.last_updated,
+      }));
+      setRates(mappedRates);
+
+      // 3. Fetch salary bands
+      const bandsData = await apiRequest("/salary-bands/");
+      const mappedBands = bandsData.map((b: any) => ({
+        id: String(b.id),
+        jobTitle: b.job_title_name || (b.job_title ? String(b.job_title) : ""),
+        country: b.country_name || (b.country ? String(b.country) : ""),
+        currency: b.currency_code || (b.currency ? String(b.currency) : ""),
+        min: parseFloat(b.min_salary),
+        mid: parseFloat(b.mid_salary),
+        max: parseFloat(b.max_salary),
+      }));
+      setBands(mappedBands);
+
+      // 4. Fetch employees
+      const employeesResponse = await apiRequest("/employees/?page_size=1000");
+      const employeesList = employeesResponse.results || [];
+      
+      const mappedEmployees: Employee[] = [];
+      const allHistory: SalaryHistoryEntry[] = [];
+
+      for (const e of employeesList) {
+        mappedEmployees.push({
+          id: e.employee_code,
+          name: e.full_name,
+          department: e.department_name,
+          jobTitle: e.job_title_name,
+          country: e.country_name,
+          currency: e.currency_code,
+          baseSalary: parseFloat(e.current_salary || "0"),
+          bonusPct: parseFloat(e.current_salary_record?.variable_bonus_pct || "0"),
+          effectiveDate: e.current_salary_record?.effective_date || "",
+          employmentType: e.employment_type === "full_time" ? "Full-time" : e.employment_type === "part_time" ? "Part-time" : "Contractor",
+          hrNote: e.current_salary_record?.hr_note || "",
+          status: e.is_active ? "Active" : "Inactive",
+        });
+
+        // 5. Fetch nested history per employee
+        try {
+          const recs = await apiRequest(`/employees/${e.employee_code}/salary-records/`);
+          // Sort chronologically (oldest first) to compute change percentages correctly
+          recs.sort((a: any, b: any) => a.effective_date.localeCompare(b.effective_date));
+          let prevSalary = 0;
+          for (const r of recs) {
+            const baseSalary = parseFloat(r.base_salary);
+            const changeAmount = prevSalary > 0 ? baseSalary - prevSalary : 0;
+            const changePct = prevSalary > 0 ? (changeAmount / prevSalary) * 100 : 0;
+            allHistory.push({
+              id: String(r.id),
+              employeeId: e.employee_code,
+              effectiveDate: r.effective_date,
+              baseSalary: baseSalary,
+              currency: e.currency_code,
+              changeAmount,
+              changePct,
+              hrNote: r.hr_note || "",
+            });
+            prevSalary = baseSalary;
+          }
+        } catch (histErr) {
+          console.error(`Failed to fetch history for ${e.employee_code}:`, histErr);
+        }
       }
-      return updated;
-    }));
-  }, [logAudit]);
+      setEmployees(mappedEmployees);
+      setHistory(allHistory);
 
-  const setEmployeeStatus = useCallback((id: string, status: Employee["status"]) => {
-    setEmployees((prev) => prev.map((e) => {
-      if (e.id !== id) return e;
-      logAudit({ action: status === "Inactive" ? "Deactivate" : "Edit", entityType: "Employee", entityName: `${e.name} (${id})`, field: "status", oldValue: e.status, newValue: status });
-      return { ...e, status };
-    }));
-  }, [logAudit]);
+      // 6. Fetch review cycles
+      const cyclesData = await apiRequest("/review-cycles/");
+      const fullCycles = await Promise.all(cyclesData.map(async (c: any) => {
+        const detail = await apiRequest(`/review-cycles/${c.id}/`);
+        
+        let totalBudgetUsd = 0;
+        for (const p of detail.proposals) {
+          const emp = employeesList.find((x: any) => x.employee_code === p.employee_code);
+          if (emp) {
+            const currencyObj = currenciesData.find((curr: any) => curr.code === emp.currency_code);
+            const rate = currencyObj ? parseFloat(currencyObj.rate_to_usd) : 1;
+            totalBudgetUsd += parseFloat(p.current_salary) * rate;
+          }
+        }
 
-  const addBand: StoreCtx["addBand"] = useCallback((b) => {
-    const id = `b-${Date.now()}`;
-    setBands((prev) => [...prev, { ...b, id }]);
-    logAudit({ action: "Create", entityType: "Band", entityName: `${b.jobTitle} / ${b.country}` });
-  }, [logAudit]);
+        return {
+          id: String(detail.id),
+          name: detail.name,
+          year: detail.year,
+          status: detail.status === "draft" ? "Draft" : detail.status === "in_progress" ? "In Progress" : "Completed",
+          budgets: detail.department_budgets.map((b: any) => ({
+            department: b.department_name,
+            budgetPct: parseFloat(b.budget_pct),
+          })),
+          proposals: detail.proposals.map((p: any) => ({
+            employeeId: p.employee_code,
+            proposedIncreasePct: parseFloat(p.proposed_increase_pct),
+          })),
+          totalBudgetUsd,
+        };
+      }));
+      setCycles(fullCycles);
 
-  const updateBand: StoreCtx["updateBand"] = useCallback((id, patch) => {
-    setBands((prev) => prev.map((b) => {
-      if (b.id !== id) return b;
-      const updated = { ...b, ...patch };
-      logAudit({ action: "Edit", entityType: "Band", entityName: `${updated.jobTitle} / ${updated.country}` });
-      return updated;
-    }));
-  }, [logAudit]);
+      // 7. Fetch audit logs
+      const auditData = await apiRequest("/audit-log/?page_size=1000");
+      const mappedAudit = (auditData.results || []).map((a: any) => ({
+        id: String(a.id),
+        timestamp: a.timestamp,
+        action: a.action === "create" ? "Create" : a.action === "update" ? "Edit" : "Deactivate",
+        entityType: a.entity_type === "employee" ? "Employee" : a.entity_type === "salary_band" ? "Band" : a.entity_type === "review_cycle" ? "Review Cycle" : "Exchange Rate",
+        entityName: a.entity_label,
+        field: a.field_changed || undefined,
+        oldValue: a.old_value || undefined,
+        newValue: a.new_value || undefined,
+        user: a.acting_user,
+      }));
+      setAudit(mappedAudit);
 
-  const deleteBand = useCallback((id: string) => {
-    setBands((prev) => {
-      const b = prev.find((x) => x.id === id);
-      if (b) logAudit({ action: "Deactivate", entityType: "Band", entityName: `${b.jobTitle} / ${b.country}` });
-      return prev.filter((x) => x.id !== id);
-    });
-  }, [logAudit]);
-
-  const upsertRate = useCallback((r: ExchangeRate) => {
-    setRates((prev) => prev.map((x) => x.code === r.code ? { ...r, lastUpdated: new Date().toISOString() } : x));
-    logAudit({ action: "Edit", entityType: "Exchange Rate", entityName: r.code, field: "rateToUsd", newValue: String(r.rateToUsd) });
-  }, [logAudit]);
-
-  const addRate = useCallback((r: ExchangeRate) => {
-    setRates((prev) => [...prev, { ...r, lastUpdated: new Date().toISOString() }]);
-    logAudit({ action: "Create", entityType: "Exchange Rate", entityName: r.code });
-  }, [logAudit]);
-
-  const addCycle: StoreCtx["addCycle"] = useCallback((c) => {
-    const id = `RC-${Date.now()}`;
-    setCycles((prev) => [...prev, { ...c, id, status: "Draft", proposals: [] }]);
-    logAudit({ action: "Create", entityType: "Review Cycle", entityName: c.name });
-  }, [logAudit]);
-
-  const updateCycle: StoreCtx["updateCycle"] = useCallback((id, patch) => {
-    setCycles((prev) => prev.map((c) => c.id === id ? { ...c, ...patch } : c));
+    } catch (err) {
+      console.error("Failed to refresh store data from backend:", err);
+    }
   }, []);
 
-  const commitCycle = useCallback((id: string) => {
-    setCycles((prev) => prev.map((c) => {
-      if (c.id !== id) return c;
-      // apply proposals
-      setEmployees((emps) => emps.map((emp) => {
-        const prop = c.proposals.find((p) => p.employeeId === emp.id);
-        if (!prop || prop.proposedIncreasePct === 0) return emp;
-        const newSalary = Math.round(emp.baseSalary * (1 + prop.proposedIncreasePct / 100));
-        const change = newSalary - emp.baseSalary;
-        setHistory((h) => [
-          { id: `H-${emp.id}-${Date.now()}-${Math.random()}`, employeeId: emp.id, effectiveDate: new Date().toISOString().slice(0, 10), baseSalary: newSalary, currency: emp.currency, changeAmount: change, changePct: prop.proposedIncreasePct, hrNote: c.name },
-          ...h,
-        ]);
-        return { ...emp, baseSalary: newSalary };
-      }));
-      logAudit({ action: "Edit", entityType: "Review Cycle", entityName: c.name, field: "status", oldValue: c.status, newValue: "Completed" });
-      return { ...c, status: "Completed" };
+  useEffect(() => {
+    if (isBrowser) {
+      refreshData();
+    }
+  }, [refreshData]);
+
+  const addEmployee: StoreCtx["addEmployee"] = useCallback(async (e) => {
+    const deptId = refDepts.find(d => d.name === e.department)?.id;
+    const country = refCountries.find(c => c.name === e.country);
+    const countryId = country?.id;
+    const jobTitleId = refJobTitles.find(j => j.title === e.jobTitle && j.department === deptId)?.id;
+    const currencyId = refCurrencies.find(c => c.code === e.currency)?.id || country?.id;
+
+    const payload = {
+      full_name: e.name,
+      department: deptId,
+      job_title: jobTitleId,
+      country: countryId,
+      local_currency: currencyId,
+      employment_type: e.employmentType === "Full-time" ? "full_time" : e.employmentType === "Part-time" ? "part_time" : "contractor",
+      base_salary: String(e.baseSalary),
+      effective_date: e.effectiveDate,
+      variable_bonus_pct: String(e.bonusPct || 0),
+      hr_note: e.hrNote || "Initial salary",
+    };
+
+    await apiRequest("/employees/", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await refreshData();
+  }, [refDepts, refCountries, refJobTitles, refCurrencies, refreshData]);
+
+  const updateEmployee: StoreCtx["updateEmployee"] = useCallback(async (id, patch, note) => {
+    // 1. If base salary or bonus changed, add a new SalaryRecord
+    if (patch.baseSalary !== undefined) {
+      await apiRequest(`/employees/${id}/salary-records/`, {
+        method: "POST",
+        body: JSON.stringify({
+          base_salary: String(patch.baseSalary),
+          variable_bonus_pct: String(patch.bonusPct ?? 0),
+          effective_date: patch.effectiveDate || new Date().toISOString().slice(0, 10),
+          hr_note: note,
+        }),
+      });
+    }
+
+    // 2. Profile changes
+    const updatePayload: any = {};
+    if (patch.name !== undefined) updatePayload.full_name = patch.name;
+    if (patch.department !== undefined) updatePayload.department = refDepts.find(d => d.name === patch.department)?.id;
+    if (patch.jobTitle !== undefined) {
+      const dName = patch.department || employees.find(x => x.id === id)?.department;
+      const dId = refDepts.find(d => d.name === dName)?.id;
+      updatePayload.job_title = refJobTitles.find(j => j.title === patch.jobTitle && j.department === dId)?.id;
+    }
+    if (patch.country !== undefined) updatePayload.country = refCountries.find(c => c.name === patch.country)?.id;
+    if (patch.currency !== undefined) updatePayload.local_currency = refCurrencies.find(c => c.code === patch.currency)?.id;
+    if (patch.employmentType !== undefined) {
+      updatePayload.employment_type = patch.employmentType === "Full-time" ? "full_time" : patch.employmentType === "Part-time" ? "part_time" : "contractor";
+    }
+
+    if (Object.keys(updatePayload).length > 0) {
+      await apiRequest(`/employees/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify(updatePayload),
+      });
+    }
+    await refreshData();
+  }, [employees, refDepts, refCountries, refJobTitles, refCurrencies, refreshData]);
+
+  const setEmployeeStatus = useCallback(async (id: string, status: Employee["status"]) => {
+    if (status === "Inactive") {
+      await apiRequest(`/employees/${id}/deactivate/`, { method: "POST" });
+    } else {
+      await apiRequest(`/employees/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: true }),
+      });
+    }
+    await refreshData();
+  }, [refreshData]);
+
+  const addBand: StoreCtx["addBand"] = useCallback(async (b) => {
+    const countryId = refCountries.find(c => c.name === b.country)?.id;
+    const jobTitleId = refJobTitles.find(j => j.title === b.jobTitle)?.id;
+    const currencyId = refCurrencies.find(c => c.code === b.currency)?.id;
+
+    await apiRequest("/salary-bands/", {
+      method: "POST",
+      body: JSON.stringify({
+        job_title: jobTitleId,
+        country: countryId,
+        min_salary: String(b.min),
+        mid_salary: String(b.mid),
+        max_salary: String(b.max),
+        currency: currencyId,
+      }),
+    });
+    await refreshData();
+  }, [refCountries, refJobTitles, refCurrencies, refreshData]);
+
+  const updateBand: StoreCtx["updateBand"] = useCallback(async (id, patch) => {
+    const bandPayload: any = {};
+    if (patch.min !== undefined) bandPayload.min_salary = String(patch.min);
+    if (patch.mid !== undefined) bandPayload.mid_salary = String(patch.mid);
+    if (patch.max !== undefined) bandPayload.max_salary = String(patch.max);
+    if (patch.currency !== undefined) bandPayload.currency = refCurrencies.find(c => c.code === patch.currency)?.id;
+
+    await apiRequest(`/salary-bands/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(bandPayload),
+    });
+    await refreshData();
+  }, [refCurrencies, refreshData]);
+
+  const deleteBand = useCallback(async (id: string) => {
+    await apiRequest(`/salary-bands/${id}/`, { method: "DELETE" });
+    await refreshData();
+  }, [refreshData]);
+
+  const upsertRate = useCallback(async (r: ExchangeRate) => {
+    const currencyId = refCurrencies.find(c => c.code === r.code)?.id;
+    if (currencyId) {
+      await apiRequest(`/settings/currencies/${currencyId}/`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          rate_to_usd: String(r.rateToUsd),
+        }),
+      });
+    }
+    await refreshData();
+  }, [refCurrencies, refreshData]);
+
+  const addRate = useCallback(async (r: ExchangeRate) => {
+    await apiRequest("/settings/currencies/", {
+      method: "POST",
+      body: JSON.stringify({
+        code: r.code,
+        name: r.name,
+        rate_to_usd: String(r.rateToUsd),
+      }),
+    });
+    await refreshData();
+  }, [refreshData]);
+
+  const addCycle: StoreCtx["addCycle"] = useCallback(async (c) => {
+    const budgets = (c.budgets || []).map(b => ({
+      department: refDepts.find(d => d.name === b.department)?.id,
+      budget_pct: String(b.budgetPct),
     }));
-  }, [logAudit]);
+
+    await apiRequest("/review-cycles/", {
+      method: "POST",
+      body: JSON.stringify({
+        name: c.name,
+        year: c.year,
+        department_budgets: budgets,
+      }),
+    });
+    await refreshData();
+  }, [refDepts, refreshData]);
+
+  const updateCycle: StoreCtx["updateCycle"] = useCallback(async (id, patch) => {
+    const cycleObj = cycles.find(x => x.id === id);
+    if (!cycleObj) return;
+
+    if (patch.status === "In Progress") {
+      await apiRequest(`/review-cycles/${id}/transition/`, {
+        method: "POST",
+        body: JSON.stringify({ status: "in_progress" }),
+      });
+    }
+
+    if (patch.proposals !== undefined) {
+      const oldProposals = cycleObj.proposals;
+      const newProposals = patch.proposals;
+      const detail = await apiRequest(`/review-cycles/${id}/`);
+
+      for (const newProp of newProposals) {
+        const oldProp = oldProposals.find(p => p.employeeId === newProp.employeeId);
+        if (!oldProp || oldProp.proposedIncreasePct !== newProp.proposedIncreasePct) {
+          const backendProp = detail.proposals.find((p: any) => p.employee_code === newProp.employeeId);
+          if (backendProp) {
+            await apiRequest(`/review-cycles/${id}/proposals/${backendProp.id}/`, {
+              method: "PATCH",
+              body: JSON.stringify({ proposed_increase_pct: newProp.proposedIncreasePct }),
+            });
+          }
+        }
+      }
+    }
+
+    if (patch.budgets !== undefined) {
+      const oldBudgets = cycleObj.budgets;
+      const newBudgets = patch.budgets;
+      const detail = await apiRequest(`/review-cycles/${id}/`);
+
+      for (const newB of newBudgets) {
+        const oldB = oldBudgets.find(b => b.department === newB.department);
+        if (!oldB || oldB.budgetPct !== newB.budgetPct) {
+          const backendB = detail.department_budgets.find((b: any) => b.department_name === newB.department);
+          if (backendB) {
+            await apiRequest(`/review-cycles/${id}/budgets/${backendB.id}/`, {
+              method: "PATCH",
+              body: JSON.stringify({ budget_pct: newB.budgetPct }),
+            });
+          }
+        }
+      }
+    }
+
+    await refreshData();
+  }, [cycles, refreshData]);
+
+  const commitCycle = useCallback(async (id: string) => {
+    await apiRequest(`/review-cycles/${id}/transition/`, {
+      method: "POST",
+      body: JSON.stringify({ status: "completed" }),
+    });
+    await refreshData();
+  }, [refreshData]);
 
   const getBandFor = useCallback((jobTitle: string, country: string) => {
     return bands.find((b) => b.jobTitle === jobTitle && b.country === country);
