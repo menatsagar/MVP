@@ -14,6 +14,7 @@ export interface Employee {
   employmentType: EmploymentType;
   hrNote?: string;
   status: Status;
+  createdAt: string; // ISO datetime
 }
 
 export interface SalaryHistoryEntry {
@@ -81,21 +82,19 @@ export interface AuditEntry {
   user: string;
 }
 
-export const DEPARTMENTS = ["Engineering", "HR", "Sales", "Finance", "Operations"];
+export const DEPARTMENTS = ["Engineering", "Sales", "Marketing", "Product", "Human Resources"];
 export const JOB_TITLES = [
   "Software Engineer",
-  "Senior Software Engineer",
-  "Engineering Manager",
-  "HR Specialist",
+  "QA Engineer",
   "Sales Executive",
-  "Sales Manager",
-  "Finance Analyst",
-  "Operations Lead",
+  "Marketing Manager",
+  "Product Manager",
+  "HR Specialist",
 ];
 export const COUNTRIES: { code: string; name: string; currency: string; symbol: string }[] = [
   { code: "IN", name: "India", currency: "INR", symbol: "₹" },
-  { code: "US", name: "USA", currency: "USD", symbol: "$" },
+  { code: "US", name: "United States", currency: "USD", symbol: "$" },
   { code: "DE", name: "Germany", currency: "EUR", symbol: "€" },
-  { code: "AE", name: "UAE", currency: "AED", symbol: "د.إ" },
-  { code: "GB", name: "UK", currency: "GBP", symbol: "£" },
+  { code: "AE", name: "United Arab Emirates", currency: "AED", symbol: "د.إ" },
+  { code: "GB", name: "United Kingdom", currency: "GBP", symbol: "£" },
 ];

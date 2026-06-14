@@ -7,12 +7,13 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { type ReactNode } from "react";
+import { type ReactNode, useState, useEffect } from "react";
 
 import appCss from "../styles.css?url";
-import { StoreProvider } from "@/lib/store";
+import { StoreProvider, useStore } from "@/lib/store";
 import { AppShell } from "@/components/AppShell";
 import { Toaster } from "@/components/ui/sonner";
+import { LoginPage } from "@/components/LoginPage";
 
 function NotFoundComponent() {
   return (
@@ -107,11 +108,32 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <StoreProvider>
-        <AppShell>
-          <Outlet />
-        </AppShell>
+        <AppContent />
         <Toaster richColors position="top-right" />
       </StoreProvider>
     </QueryClientProvider>
+  );
+}
+
+function AppContent() {
+  const { isAuthenticated } = useStore();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return <LoginPage />;
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
   );
 }

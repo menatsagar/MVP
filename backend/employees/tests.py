@@ -251,6 +251,22 @@ class EmployeeAPITests(BaseAPITestCase):
         emp.refresh_from_db()
         self.assertEqual(emp.current_salary_record.base_salary, Decimal("550000.00"))
 
+    def test_options_api(self):
+        url = reverse("employee-get-options")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("departments", response.data)
+        self.assertIn("job_titles", response.data)
+        self.assertIn("countries", response.data)
+        self.assertIn("currencies", response.data)
+        
+        # Check serialization fields
+        self.assertEqual(len(response.data["departments"]), 1)
+        self.assertEqual(response.data["departments"][0]["name"], self.dept_eng.name)
+        
+        self.assertEqual(len(response.data["countries"]), 2)
+        self.assertEqual(response.data["countries"][0]["name"], "India")
+
 
 class EmployeeFilterTests(BaseAPITestCase):
     def test_employee_filtering(self):

@@ -10,9 +10,9 @@ from rest_framework.authtoken.models import Token
 
 User = get_user_model()
 
-DEFAULT_USERNAME = "hr_manager"
-DEFAULT_EMAIL = "hr@company.com"
-DEFAULT_PASSWORD = "changeme123!"
+DEFAULT_USERNAME = "sagar_menat"
+DEFAULT_EMAIL = "sagar.menat@trootech.com"
+DEFAULT_PASSWORD = "Test@123"
 
 
 class Command(BaseCommand):

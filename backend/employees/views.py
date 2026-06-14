@@ -96,6 +96,29 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     # Custom actions
     # -----------------------------------------------------------------------
 
+    @action(detail=False, methods=["get"], url_path="options")
+    def get_options(self, request):
+        """Fetch all lookup options (departments, job titles, countries, currencies)."""
+        from core.models import Country, Currency, Department, JobTitle
+        from core.serializers import (
+            CountrySerializer,
+            CurrencySerializer,
+            DepartmentSerializer,
+            JobTitleSerializer,
+        )
+
+        departments = Department.objects.all()
+        job_titles = JobTitle.objects.select_related("department").all()
+        countries = Country.objects.select_related("default_currency").all()
+        currencies = Currency.objects.all()
+
+        return Response({
+            "departments": DepartmentSerializer(departments, many=True).data,
+            "job_titles": JobTitleSerializer(job_titles, many=True).data,
+            "countries": CountrySerializer(countries, many=True).data,
+            "currencies": CurrencySerializer(currencies, many=True).data,
+        })
+
     @action(detail=True, methods=["post"])
     def deactivate(self, request, employee_code=None):
         """Explicitly deactivate an employee."""

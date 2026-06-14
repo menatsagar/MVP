@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Users, Plus, Upload, Download, Search } from "lucide-react";
+import { useMemo, useState, useCallback } from "react";
+import { Users, Plus, Upload, Download, Search, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { PageHeader, EmptyState } from "@/components/PageHeader";
 import { useStore, bandStatus } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,10 @@ import { ImportCsvDialog } from "@/components/ImportCsvDialog";
 import { DEPARTMENTS, COUNTRIES } from "@/lib/types";
 import { formatLocal, formatUsd, toUsd } from "@/lib/format";
 import { exportEmployeesCsv } from "@/lib/csv";
+import type { Employee } from "@/lib/types";
+
+type SortKey = "id" | "name" | "department" | "jobTitle" | "country" | "currency" | "baseSalary" | "usd" | "employmentType" | "status";
+type SortDir = "asc" | "desc";
 
 export const Route = createFileRoute("/employees")({
   head: () => ({ meta: [{ title: "Employees — ACME Salary" }] }),
@@ -28,6 +32,19 @@ function EmployeesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const toggleSort = useCallback((key: SortKey) => {
+    if (sortKey === key) {
+      if (sortDir === "asc") setSortDir("desc");
+      else { setSortKey(null); setSortDir("asc"); }
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }, [sortKey, sortDir]);
+
   const filtered = useMemo(() => {
     return employees.filter((e) => {
       if (status !== "all" && e.status !== status) return false;
@@ -41,6 +58,31 @@ function EmployeesPage() {
       return true;
     });
   }, [employees, search, dept, country, empType, status]);
+
+  const sorted = useMemo(() => {
+    // Default: newest first (by createdAt descending)
+    if (!sortKey) {
+      return [...filtered].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    }
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      let aVal: string | number;
+      let bVal: string | number;
+      if (sortKey === "usd") {
+        aVal = toUsd(a.baseSalary, a.currency, rates) ?? -Infinity;
+        bVal = toUsd(b.baseSalary, b.currency, rates) ?? -Infinity;
+      } else if (sortKey === "baseSalary") {
+        aVal = a.baseSalary;
+        bVal = b.baseSalary;
+      } else {
+        aVal = (a[sortKey as keyof Employee] as string ?? "").toString().toLowerCase();
+        bVal = (b[sortKey as keyof Employee] as string ?? "").toString().toLowerCase();
+      }
+      if (aVal < bVal) return -1 * dir;
+      if (aVal > bVal) return 1 * dir;
+      return 0;
+    });
+  }, [filtered, sortKey, sortDir, rates]);
 
   return (
     <div className="p-8 max-w-[1600px]">
@@ -91,20 +133,20 @@ function EmployeesPage() {
             <table className="w-full text-sm">
               <thead className="bg-muted/60 sticky top-0">
                 <tr className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  <th className="px-4 py-3">ID</th>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Department</th>
-                  <th className="px-4 py-3">Job Title</th>
-                  <th className="px-4 py-3">Country</th>
-                  <th className="px-4 py-3">Currency</th>
-                  <th className="px-4 py-3 text-right">Base Salary</th>
-                  <th className="px-4 py-3 text-right">USD Equiv.</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Status</th>
+                  <SortableHeader label="ID" sortKey="id" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Name" sortKey="name" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Department" sortKey="department" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Job Title" sortKey="jobTitle" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Country" sortKey="country" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Currency" sortKey="currency" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Base Salary" sortKey="baseSalary" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableHeader label="USD Equiv." sortKey="usd" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableHeader label="Type" sortKey="employmentType" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Status" sortKey="status" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((e) => {
+                {sorted.map((e) => {
                   const usd = toUsd(e.baseSalary, e.currency, rates);
                   const band = getBandFor(e.jobTitle, e.country);
                   const bs = bandStatus(e.baseSalary, band);
@@ -146,6 +188,37 @@ function EmployeesPage() {
       <EmployeeFormPanel open={formOpen} onOpenChange={setFormOpen} />
       <ImportCsvDialog open={importOpen} onOpenChange={setImportOpen} />
     </div>
+  );
+}
+
+/* ─── Sortable column header ─── */
+function SortableHeader({ label, sortKey, currentKey, currentDir, onSort, align }: {
+  label: string;
+  sortKey: SortKey;
+  currentKey: SortKey | null;
+  currentDir: SortDir;
+  onSort: (key: SortKey) => void;
+  align?: "right";
+}) {
+  const active = currentKey === sortKey;
+  return (
+    <th
+      className={`px-4 py-3 cursor-pointer select-none group transition-colors hover:text-foreground ${align === "right" ? "text-right" : ""}`}
+      onClick={() => onSort(sortKey)}
+    >
+      <span className={`inline-flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
+        {label}
+        {active ? (
+          currentDir === "asc" ? (
+            <ChevronUp className="h-3.5 w-3.5 text-foreground" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 text-foreground" />
+          )
+        ) : (
+          <ChevronsUpDown className="h-3.5 w-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+        )}
+      </span>
+    </th>
   );
 }
 

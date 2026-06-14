@@ -12,7 +12,7 @@ export function exportEmployeesCsv(employees: Employee[], rates: ExchangeRate[])
 
 export function downloadSampleCsv() {
   const headers = ["name", "department", "jobTitle", "country", "currency", "baseSalary", "bonusPct", "employmentType", "effectiveDate"];
-  const example = ["Jane Doe", "Engineering", "Software Engineer", "USA", "USD", "120000", "10", "Full-time", "2026-01-01"];
+  const example = ["Jane Doe", "Engineering", "Software Engineer", "United States", "USD", "120000", "10", "Full-time", "2026-01-01"];
   download("employees-template.csv", toCsv([headers, example]));
 }
 

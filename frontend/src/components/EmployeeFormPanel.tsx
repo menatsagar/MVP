@@ -8,13 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useStore } from "@/lib/store";
-import { COUNTRIES, DEPARTMENTS, JOB_TITLES, type Employee } from "@/lib/types";
+import { type Employee } from "@/lib/types";
 import { toast } from "sonner";
 
 export function EmployeeFormPanel({
   open, onOpenChange, employee,
 }: { open: boolean; onOpenChange: (v: boolean) => void; employee?: Employee }) {
-  const { addEmployee, updateEmployee } = useStore();
+  const { addEmployee, updateEmployee, refDepts, refCountries, refJobTitles, refCurrencies } = useStore();
   const isEdit = !!employee;
   const [form, setForm] = useState<Employee>(() => employee || blank());
 
@@ -24,24 +24,36 @@ export function EmployeeFormPanel({
     setForm((p) => ({ ...p, [k]: v }));
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!form.name || !form.department || !form.jobTitle || !form.country || !form.baseSalary) {
       toast.error("Please fill all required fields.");
       return;
     }
-    if (isEdit) {
-      if (!form.hrNote || form.hrNote.trim().length === 0) {
-        toast.error("HR Note is required when editing an existing record.");
-        return;
+    try {
+      if (isEdit) {
+        if (!form.hrNote || form.hrNote.trim().length === 0) {
+          toast.error("HR Note is required when editing an existing record.");
+          return;
+        }
+        await updateEmployee(employee!.id, form, form.hrNote);
+        toast.success("Employee updated.");
+      } else {
+        await addEmployee(form);
+        toast.success("Employee added.");
       }
-      updateEmployee(employee!.id, form, form.hrNote);
-      toast.success("Employee updated.");
-    } else {
-      addEmployee(form);
-      toast.success("Employee added.");
+      onOpenChange(false);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save employee.");
     }
-    onOpenChange(false);
   }
+
+  // Dynamic Options lists
+  const deptOptions = refDepts.map((d) => d.name);
+  const selectedDeptId = refDepts.find((d) => d.name === form.department)?.id;
+  const filteredJobTitles = selectedDeptId
+    ? refJobTitles.filter((j) => j.department === selectedDeptId)
+    : refJobTitles;
+  const jobTitleOptions = filteredJobTitles.map((j) => j.title);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -62,27 +74,41 @@ export function EmployeeFormPanel({
           </Row>
           <div className="grid grid-cols-2 gap-3">
             <Row label="Department *">
-              <SelectField value={form.department} onChange={(v) => set("department", v)} options={DEPARTMENTS} />
+              <SelectField
+                value={form.department}
+                onChange={(v) => {
+                  setForm((p) => ({ ...p, department: v, jobTitle: "" }));
+                }}
+                options={deptOptions}
+              />
             </Row>
             <Row label="Job Title *">
-              <SelectField value={form.jobTitle} onChange={(v) => set("jobTitle", v)} options={JOB_TITLES} />
+              <SelectField value={form.jobTitle} onChange={(v) => set("jobTitle", v)} options={jobTitleOptions} />
             </Row>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Row label="Country *">
               <Select value={form.country} onValueChange={(v) => {
-                const c = COUNTRIES.find((x) => x.name === v);
-                set("country", v);
-                if (c) set("currency", c.currency);
+                const c = refCountries.find((x) => x.name === v);
+                setForm((p) => ({
+                  ...p,
+                  country: v,
+                  currency: c ? c.default_currency_code : p.currency,
+                }));
               }}>
                 <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                 <SelectContent>
-                  {COUNTRIES.map((c) => <SelectItem key={c.code} value={c.name}>{c.name}</SelectItem>)}
+                  {refCountries.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </Row>
-            <Row label="Local Currency">
-              <Input value={form.currency} onChange={(e) => set("currency", e.target.value.toUpperCase())} />
+            <Row label="Local Currency *">
+              <Select value={form.currency} onValueChange={(v) => set("currency", v)}>
+                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  {refCurrencies.map((c) => <SelectItem key={c.id} value={c.code}>{c.code} — {c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </Row>
           </div>
           <div className="grid grid-cols-2 gap-3">

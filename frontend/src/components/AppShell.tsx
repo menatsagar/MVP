@@ -1,7 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { Users, Layers, BarChart3, ClipboardList, History, Settings, Menu, Building2 } from "lucide-react";
+import { Users, Layers, BarChart3, ClipboardList, History, Settings, Menu, Building2, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useStore } from "@/lib/store";
 
 const nav = [
   { to: "/employees", label: "Employees", icon: Users },
@@ -15,6 +16,7 @@ const nav = [
 export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { logout } = useStore();
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -56,9 +58,22 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
+        <div className="p-2 border-t border-border mt-auto">
+          <button
+            onClick={logout}
+            className={cn(
+              "w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors cursor-pointer",
+              collapsed && "justify-center px-0"
+            )}
+            title="Log Out"
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!collapsed && <span>Log Out</span>}
+          </button>
+        </div>
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className="m-2 flex items-center justify-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground hover:bg-muted"
+          className="m-2 flex items-center justify-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground hover:bg-muted cursor-pointer"
         >
           <Menu className="h-4 w-4" />
           {!collapsed && <span>Collapse</span>}

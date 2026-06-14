@@ -11,6 +11,9 @@ interface StoreCtx {
   rates: ExchangeRate[];
   cycles: ReviewCycle[];
   audit: AuditEntry[];
+  isAuthenticated: boolean;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => void;
   addEmployee: (e: Omit<Employee, "id"> & { id?: string }) => Promise<void>;
   updateEmployee: (id: string, patch: Partial<Employee>, note: string) => Promise<void>;
   setEmployeeStatus: (id: string, status: Employee["status"]) => Promise<void>;
@@ -24,61 +27,18 @@ interface StoreCtx {
   commitCycle: (id: string) => Promise<void>;
   logAudit: (e: Omit<AuditEntry, "id" | "timestamp" | "user">) => void;
   getBandFor: (jobTitle: string, country: string) => SalaryBand | undefined;
+  refDepts: { id: number; name: string }[];
+  refCountries: { id: number; name: string; default_currency: number; default_currency_code: string }[];
+  refJobTitles: { id: number; title: string; department: number; department_name: string }[];
+  refCurrencies: { id: number; code: string; name: string; rate_to_usd: string }[];
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
 
 const isBrowser = typeof window !== "undefined";
 
-let authToken: string | null = null;
-
-async function getAuthToken() {
-  if (authToken) return authToken;
-  const storedToken = isBrowser ? localStorage.getItem("auth_token") : null;
-  if (storedToken) {
-    authToken = storedToken;
-    return authToken;
-  }
-  try {
-    const res = await fetch("http://localhost:8000/api/auth/token/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "hr_manager", password: "changeme123!" }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      authToken = data.token;
-      if (isBrowser) {
-        localStorage.setItem("auth_token", data.token);
-      }
-      return authToken;
-    }
-  } catch (err) {
-    console.error("Auth failed:", err);
-  }
-  return null;
-}
-
-async function apiRequest(path: string, options: RequestInit = {}) {
-  const token = await getAuthToken();
-  const headers = {
-    "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Token ${token}` } : {}),
-    ...options.headers,
-  };
-  const res = await fetch(`http://localhost:8000/api${path}`, {
-    ...options,
-    headers,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API error ${res.status}: ${text}`);
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
-
 export function StoreProvider({ children }: { children: ReactNode }) {
+  const [token, setToken] = useState<string | null>(() => isBrowser ? localStorage.getItem("auth_token") : null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [history, setHistory] = useState<SalaryHistoryEntry[]>([]);
   const [bands, setBands] = useState<SalaryBand[]>([]);
@@ -86,11 +46,74 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [cycles, setCycles] = useState<ReviewCycle[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
 
+  const isAuthenticated = !!token;
+
+  const logout = useCallback(() => {
+    setToken(null);
+    if (isBrowser) {
+      localStorage.removeItem("auth_token");
+    }
+    setEmployees([]);
+    setHistory([]);
+    setBands([]);
+    setRates([]);
+    setCycles([]);
+    setAudit([]);
+  }, []);
+
+  const login = useCallback(async (username: string, password: string) => {
+    const res = await fetch("http://localhost:8000/api/auth/token/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      let errorMsg = "Login failed. Please check your credentials.";
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.non_field_errors) {
+          errorMsg = parsed.non_field_errors.join(" ");
+        } else if (parsed.detail) {
+          errorMsg = parsed.detail;
+        }
+      } catch {}
+      throw new Error(errorMsg);
+    }
+    const data = await res.json();
+    setToken(data.token);
+    if (isBrowser) {
+      localStorage.setItem("auth_token", data.token);
+    }
+  }, []);
+
+  const apiRequest = useCallback(async (path: string, options: RequestInit = {}) => {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Token ${token}` } : {}),
+      ...options.headers,
+    };
+    const res = await fetch(`http://localhost:8000/api${path}`, {
+      ...options,
+      headers,
+    });
+    if (res.status === 401) {
+      logout();
+      throw new Error("Session expired. Please log in again.");
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`API error ${res.status}: ${text}`);
+    }
+    if (res.status === 204) return null;
+    return res.json();
+  }, [token, logout]);
+
   // Cache reference data mapping lists
   const [refDepts, setRefDepts] = useState<{ id: number; name: string }[]>([]);
-  const [refCountries, setRefCountries] = useState<{ id: number; name: string }[]>([]);
-  const [refJobTitles, setRefJobTitles] = useState<{ id: number; title: string; department: number }[]>([]);
-  const [refCurrencies, setRefCurrencies] = useState<{ id: number; code: string }[]>([]);
+  const [refCountries, setRefCountries] = useState<{ id: number; name: string; default_currency: number; default_currency_code: string }[]>([]);
+  const [refJobTitles, setRefJobTitles] = useState<{ id: number; title: string; department: number; department_name: string }[]>([]);
+  const [refCurrencies, setRefCurrencies] = useState<{ id: number; code: string; name: string; rate_to_usd: string }[]>([]);
 
   const logAudit = useCallback((e: Omit<AuditEntry, "id" | "timestamp" | "user">) => {
     // Audit logs are read-only via API and created on the backend.
@@ -108,17 +131,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshData = useCallback(async () => {
     try {
-      // 1. Fetch metadata references
-      const deptsData = await apiRequest("/departments/");
+      // 1. Fetch metadata references and currencies in a single options request
+      const optionsRes = await apiRequest("/employees/options/");
+      const deptsData = optionsRes?.departments || [];
       setRefDepts(deptsData);
-      const countriesData = await apiRequest("/countries/");
+      const countriesData = optionsRes?.countries || [];
       setRefCountries(countriesData);
-      const jobTitlesData = await apiRequest("/job-titles/");
+      const jobTitlesData = optionsRes?.job_titles || [];
       setRefJobTitles(jobTitlesData);
-
-      // 2. Fetch exchange rates (currencies)
-      const currenciesData = await apiRequest("/settings/currencies/");
+      const currenciesData = optionsRes?.currencies || [];
       setRefCurrencies(currenciesData);
+
       const mappedRates = currenciesData.map((c: any) => ({
         code: c.code,
         name: c.name,
@@ -128,7 +151,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setRates(mappedRates);
 
       // 3. Fetch salary bands
-      const bandsData = await apiRequest("/salary-bands/");
+      const bandsRes = await apiRequest("/salary-bands/?page_size=1000");
+      const bandsData = bandsRes?.results || bandsRes || [];
       const mappedBands = bandsData.map((b: any) => ({
         id: String(b.id),
         jobTitle: b.job_title_name || (b.job_title ? String(b.job_title) : ""),
@@ -161,6 +185,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           employmentType: e.employment_type === "full_time" ? "Full-time" : e.employment_type === "part_time" ? "Part-time" : "Contractor",
           hrNote: e.current_salary_record?.hr_note || "",
           status: e.is_active ? "Active" : "Inactive",
+          createdAt: e.created_at || "",
         });
 
         // 5. Fetch nested history per employee
@@ -193,7 +218,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setHistory(allHistory);
 
       // 6. Fetch review cycles
-      const cyclesData = await apiRequest("/review-cycles/");
+      const cyclesRes = await apiRequest("/review-cycles/?page_size=1000");
+      const cyclesData = cyclesRes?.results || cyclesRes || [];
       const fullCycles = await Promise.all(cyclesData.map(async (c: any) => {
         const detail = await apiRequest(`/review-cycles/${c.id}/`);
         
@@ -243,20 +269,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error("Failed to refresh store data from backend:", err);
     }
-  }, []);
+  }, [apiRequest]);
 
   useEffect(() => {
-    if (isBrowser) {
+    if (isBrowser && token) {
       refreshData();
     }
-  }, [refreshData]);
+  }, [refreshData, token]);
 
   const addEmployee: StoreCtx["addEmployee"] = useCallback(async (e) => {
     const deptId = refDepts.find(d => d.name === e.department)?.id;
     const country = refCountries.find(c => c.name === e.country);
     const countryId = country?.id;
     const jobTitleId = refJobTitles.find(j => j.title === e.jobTitle && j.department === deptId)?.id;
-    const currencyId = refCurrencies.find(c => c.code === e.currency)?.id || country?.id;
+    const currencyId = refCurrencies.find(c => c.code === e.currency)?.id || country?.default_currency;
 
     const payload = {
       full_name: e.name,
@@ -475,11 +501,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       employees, history, bands, rates, cycles, audit,
+      isAuthenticated, login, logout,
       addEmployee, updateEmployee, setEmployeeStatus,
       addBand, updateBand, deleteBand,
       upsertRate, addRate,
       addCycle, updateCycle, commitCycle,
       logAudit, getBandFor,
+      refDepts, refCountries, refJobTitles, refCurrencies,
     }}>
       {children}
     </Ctx.Provider>
