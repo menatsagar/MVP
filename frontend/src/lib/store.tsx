@@ -150,7 +150,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }));
       setRates(mappedRates);
 
-      // 3. Fetch salary bands
+      // 2. Fetch salary bands
       const bandsRes = await apiRequest("/salary-bands/?page_size=1000");
       const bandsData = bandsRes?.results || bandsRes || [];
       const mappedBands = bandsData.map((b: any) => ({
@@ -164,60 +164,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }));
       setBands(mappedBands);
 
-      // 4. Fetch employees
+      // 3. Fetch a lightweight employee list (no per-employee salary-records calls!)
+      //    This is only used for CSV export and reviews.
+      //    The employees LIST page fetches its own paginated data directly.
       const employeesResponse = await apiRequest("/employees/?page_size=1000");
       const employeesList = employeesResponse.results || [];
-      
-      const mappedEmployees: Employee[] = [];
-      const allHistory: SalaryHistoryEntry[] = [];
 
-      for (const e of employeesList) {
-        mappedEmployees.push({
-          id: e.employee_code,
-          name: e.full_name,
-          department: e.department_name,
-          jobTitle: e.job_title_name,
-          country: e.country_name,
-          currency: e.currency_code,
-          baseSalary: parseFloat(e.current_salary || "0"),
-          bonusPct: parseFloat(e.current_salary_record?.variable_bonus_pct || "0"),
-          effectiveDate: e.current_salary_record?.effective_date || "",
-          employmentType: e.employment_type === "full_time" ? "Full-time" : e.employment_type === "part_time" ? "Part-time" : "Contractor",
-          hrNote: e.current_salary_record?.hr_note || "",
-          status: e.is_active ? "Active" : "Inactive",
-          createdAt: e.created_at || "",
-        });
-
-        // 5. Fetch nested history per employee
-        try {
-          const recs = await apiRequest(`/employees/${e.employee_code}/salary-records/`);
-          // Sort chronologically (oldest first) to compute change percentages correctly
-          recs.sort((a: any, b: any) => a.effective_date.localeCompare(b.effective_date));
-          let prevSalary = 0;
-          for (const r of recs) {
-            const baseSalary = parseFloat(r.base_salary);
-            const changeAmount = prevSalary > 0 ? baseSalary - prevSalary : 0;
-            const changePct = prevSalary > 0 ? (changeAmount / prevSalary) * 100 : 0;
-            allHistory.push({
-              id: String(r.id),
-              employeeId: e.employee_code,
-              effectiveDate: r.effective_date,
-              baseSalary: baseSalary,
-              currency: e.currency_code,
-              changeAmount,
-              changePct,
-              hrNote: r.hr_note || "",
-            });
-            prevSalary = baseSalary;
-          }
-        } catch (histErr) {
-          console.error(`Failed to fetch history for ${e.employee_code}:`, histErr);
-        }
-      }
+      const mappedEmployees: Employee[] = employeesList.map((e: any) => ({
+        id: e.employee_code,
+        name: e.full_name,
+        department: e.department_name,
+        jobTitle: e.job_title_name,
+        country: e.country_name,
+        currency: e.currency_code,
+        baseSalary: parseFloat(e.current_base_salary || "0"),
+        bonusPct: 0,
+        effectiveDate: "",
+        employmentType: e.employment_type === "full_time" ? "Full-time" : e.employment_type === "part_time" ? "Part-time" : "Contractor",
+        hrNote: "",
+        status: e.is_active ? "Active" : "Inactive",
+        createdAt: e.created_at || "",
+      }));
       setEmployees(mappedEmployees);
-      setHistory(allHistory);
+      // NOTE: Salary history is no longer fetched here.
+      // It is loaded on-demand on the employee detail page.
+      setHistory([]);
 
-      // 6. Fetch review cycles
+      // 4. Fetch review cycles
       const cyclesRes = await apiRequest("/review-cycles/?page_size=1000");
       const cyclesData = cyclesRes?.results || cyclesRes || [];
       const fullCycles = await Promise.all(cyclesData.map(async (c: any) => {
@@ -251,7 +224,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }));
       setCycles(fullCycles);
 
-      // 7. Fetch audit logs
+      // 5. Fetch audit logs
       const auditData = await apiRequest("/audit-log/?page_size=1000");
       const mappedAudit = (auditData.results || []).map((a: any) => ({
         id: String(a.id),

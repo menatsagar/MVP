@@ -32,7 +32,18 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     filterset_class = EmployeeFilter
     search_fields = ["full_name", "employee_code"]
-    ordering_fields = ["employee_code", "full_name", "created_at"]
+    ordering_fields = [
+        "employee_code",
+        "full_name",
+        "department__name",
+        "job_title__title",
+        "country__name",
+        "local_currency__code",
+        "employment_type",
+        "is_active",
+        "created_at",
+    ]
+    ordering = ["-created_at"]
     lookup_field = "employee_code"
 
     def get_queryset(self):
@@ -199,19 +210,29 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     )
     def import_csv(self, request):
         """
-        Upload a CSV file for bulk employee import.
+        Upload a CSV or XLSX file for bulk employee import.
         Returns a task_id to poll for status.
         """
-        csv_file = request.FILES.get("file")
-        if not csv_file:
+        import os
+
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
             return Response(
-                {"error": "No file provided. Send a CSV as 'file'."},
+                {"error": "No file provided. Send a CSV or XLSX as 'file'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate file extension
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if ext not in (".csv", ".xlsx"):
+            return Response(
+                {"error": f"Unsupported file format: '{ext}'. Please upload a .csv or .xlsx file."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         task = BackgroundTask.objects.create(task_type="csv_import")
-        # Save file to task
-        task.file.save(f"import_{task.id}.csv", csv_file)
+        # Save file with correct extension
+        task.file.save(f"import_{task.id}{ext}", uploaded_file)
 
         from .tasks import process_csv_import
 

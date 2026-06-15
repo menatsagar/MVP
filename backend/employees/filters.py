@@ -10,9 +10,16 @@ class EmployeeFilter(django_filters.FilterSet):
     Filters for the employee list endpoint.
 
     Supports: department, country, employment_type, is_active, search, band_status.
+    Also supports name-based filters: department_name, country_name.
     """
 
     search = django_filters.CharFilter(method="filter_search", label="Search name or code")
+    department_name = django_filters.CharFilter(
+        field_name="department__name", lookup_expr="exact", label="Department name"
+    )
+    country_name = django_filters.CharFilter(
+        field_name="country__name", lookup_expr="exact", label="Country name"
+    )
     band_status = django_filters.ChoiceFilter(
         choices=[
             ("below", "Below Band"),

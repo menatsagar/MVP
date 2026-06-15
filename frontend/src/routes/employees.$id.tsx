@@ -1,11 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Edit3, Power } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Edit3, Power, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
 import { useStore, bandStatus } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { formatLocalWithUsd, formatLocal, formatUsd, toUsd } from "@/lib/format";
 import { EmployeeFormPanel } from "@/components/EmployeeFormPanel";
 import { StatusPill } from "./employees";
+import type { SalaryHistoryEntry } from "@/lib/types";
 
 export const Route = createFileRoute("/employees/$id")({
   component: EmployeeDetail,
@@ -14,9 +15,55 @@ export const Route = createFileRoute("/employees/$id")({
 function EmployeeDetail() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
-  const { employees, history, rates, getBandFor, setEmployeeStatus } = useStore();
+  const { employees, rates, getBandFor, setEmployeeStatus } = useStore();
   const emp = employees.find((e) => e.id === id);
   const [editOpen, setEditOpen] = useState(false);
+  const [salaryHistory, setSalaryHistory] = useState<SalaryHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  // Fetch salary history on-demand for this specific employee
+  useEffect(() => {
+    if (!id) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+    if (!token) return;
+
+    setHistoryLoading(true);
+    fetch(`http://localhost:8000/api/employees/${id}/salary-records/`, {
+      headers: { Authorization: `Token ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`API error ${res.status}`);
+        return res.json();
+      })
+      .then((recs: any[]) => {
+        // Sort chronologically (oldest first) to compute change percentages
+        recs.sort((a, b) => a.effective_date.localeCompare(b.effective_date));
+        let prevSalary = 0;
+        const mapped: SalaryHistoryEntry[] = recs.map((r) => {
+          const baseSalary = parseFloat(r.base_salary);
+          const changeAmount = prevSalary > 0 ? baseSalary - prevSalary : 0;
+          const changePct = prevSalary > 0 ? (changeAmount / prevSalary) * 100 : 0;
+          prevSalary = baseSalary;
+          return {
+            id: String(r.id),
+            employeeId: id,
+            effectiveDate: r.effective_date,
+            baseSalary,
+            currency: emp?.currency || "",
+            changeAmount,
+            changePct,
+            hrNote: r.hr_note || "",
+          };
+        });
+        // Show newest first in the table
+        setSalaryHistory(mapped.reverse());
+      })
+      .catch((err) => {
+        console.error(`Failed to fetch salary history for ${id}:`, err);
+        setSalaryHistory([]);
+      })
+      .finally(() => setHistoryLoading(false));
+  }, [id, emp?.currency]);
 
   if (!emp) {
     return (
@@ -31,8 +78,6 @@ function EmployeeDetail() {
 
   const band = getBandFor(emp.jobTitle, emp.country);
   const bs = bandStatus(emp.baseSalary, band);
-  const empHistory = history.filter((h) => h.employeeId === emp.id)
-    .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate));
 
   return (
     <div className="p-8 max-w-5xl">
@@ -66,7 +111,7 @@ function EmployeeDetail() {
           <Field label="Currency" value={emp.currency} />
           <Field label="Base Salary" value={formatLocalWithUsd(emp.baseSalary, emp.currency, rates)} />
           <Field label="Bonus Target" value={`${emp.bonusPct}%`} />
-          <Field label="Effective Date" value={emp.effectiveDate} />
+          <Field label="Effective Date" value={emp.effectiveDate || "—"} />
           <Field label="Employment Type" value={emp.employmentType} />
         </div>
       </div>
@@ -89,35 +134,45 @@ function EmployeeDetail() {
           <h2 className="text-base font-semibold">Salary History</h2>
           <p className="text-xs text-muted-foreground mt-0.5">Append-only record of compensation changes.</p>
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-muted/60">
-            <tr className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              <th className="px-6 py-3">Effective Date</th>
-              <th className="px-6 py-3 text-right">Base Salary</th>
-              <th className="px-6 py-3 text-right">USD Equiv.</th>
-              <th className="px-6 py-3 text-right">Change</th>
-              <th className="px-6 py-3 text-right">Change %</th>
-              <th className="px-6 py-3">HR Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {empHistory.map((h) => {
-              const usd = toUsd(h.baseSalary, h.currency, rates);
-              return (
-                <tr key={h.id} className="border-t border-border">
-                  <td className="px-6 py-3">{h.effectiveDate}</td>
-                  <td className="px-6 py-3 text-right tabular-nums">{formatLocal(h.baseSalary, h.currency)}</td>
-                  <td className="px-6 py-3 text-right tabular-nums text-muted-foreground">{usd === null ? "—" : formatUsd(usd)}</td>
-                  <td className={`px-6 py-3 text-right tabular-nums ${h.changeAmount > 0 ? "text-[color:var(--status-active)]" : h.changeAmount < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                    {h.changeAmount === 0 ? "—" : (h.changeAmount > 0 ? "+" : "") + formatLocal(h.changeAmount, h.currency)}
-                  </td>
-                  <td className="px-6 py-3 text-right tabular-nums">{h.changePct === 0 ? "—" : `${h.changePct > 0 ? "+" : ""}${h.changePct.toFixed(1)}%`}</td>
-                  <td className="px-6 py-3 text-muted-foreground">{h.hrNote}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {historyLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        ) : salaryHistory.length === 0 ? (
+          <div className="px-6 py-8 text-center text-sm text-muted-foreground">
+            No salary history records found.
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-muted/60">
+              <tr className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                <th className="px-6 py-3">Effective Date</th>
+                <th className="px-6 py-3 text-right">Base Salary</th>
+                <th className="px-6 py-3 text-right">USD Equiv.</th>
+                <th className="px-6 py-3 text-right">Change</th>
+                <th className="px-6 py-3 text-right">Change %</th>
+                <th className="px-6 py-3">HR Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {salaryHistory.map((h) => {
+                const usd = toUsd(h.baseSalary, h.currency, rates);
+                return (
+                  <tr key={h.id} className="border-t border-border">
+                    <td className="px-6 py-3">{h.effectiveDate}</td>
+                    <td className="px-6 py-3 text-right tabular-nums">{formatLocal(h.baseSalary, h.currency)}</td>
+                    <td className="px-6 py-3 text-right tabular-nums text-muted-foreground">{usd === null ? "—" : formatUsd(usd)}</td>
+                    <td className={`px-6 py-3 text-right tabular-nums ${h.changeAmount > 0 ? "text-[color:var(--status-active)]" : h.changeAmount < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                      {h.changeAmount === 0 ? "—" : (h.changeAmount > 0 ? "+" : "") + formatLocal(h.changeAmount, h.currency)}
+                    </td>
+                    <td className="px-6 py-3 text-right tabular-nums">{h.changePct === 0 ? "—" : `${h.changePct > 0 ? "+" : ""}${h.changePct.toFixed(1)}%`}</td>
+                    <td className="px-6 py-3 text-muted-foreground">{h.hrNote}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <EmployeeFormPanel open={editOpen} onOpenChange={setEditOpen} employee={emp} />
